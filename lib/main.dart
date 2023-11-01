@@ -3,10 +3,6 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:shamela_scraping_elhosam/home_view.dart';
 
 void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-  // final status = await Permission.storage.status;
-  await Permission.storage.request();
-  await Permission.manageExternalStorage.request();
   runApp(const MyApp());
 }
 

@@ -1,13 +1,17 @@
 import 'dart:developer';
 import 'dart:io';
 
+import 'package:device_info_plus/device_info_plus.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:html/parser.dart' as parserLibrary;
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:docx_template/docx_template.dart' as docx;
 import 'package:permission_handler/permission_handler.dart';
+import 'package:printing/printing.dart';
 
 class Chapter {
   String title;
@@ -30,50 +34,46 @@ class HomeView extends StatefulWidget {
 class _HomeViewState extends State<HomeView> {
   @override
   void initState() {
-    
+    _getStoragePermission();
     super.initState();
+  }
+
+  int chapters = 0;
+  int lessons = 0;
+  Future<void> _getStoragePermission() async {
+    DeviceInfoPlugin plugin = DeviceInfoPlugin();
+    AndroidDeviceInfo android = await plugin.androidInfo;
+    if (android.version.sdkInt < 33) {
+      if (await Permission.storage.request().isGranted) {
+        setState(() {
+          permissionGranted = true;
+        });
+      } else if (await Permission.storage.request().isPermanentlyDenied) {
+        await openAppSettings();
+      } else if (await Permission.audio.request().isDenied) {
+        setState(() {
+          permissionGranted = false;
+        });
+      }
+    } else {
+      if (await Permission.photos.request().isGranted) {
+        setState(() {
+          permissionGranted = true;
+        });
+      } else if (await Permission.photos.request().isPermanentlyDenied) {
+        await openAppSettings();
+      } else if (await Permission.photos.request().isDenied) {
+        setState(() {
+          permissionGranted = false;
+        });
+      }
+    }
   }
 
   List<Chapter> result = [];
   bool isLoading = false;
+  bool permissionGranted = false;
   int page = 1;
-  Future<void> checkAndRequestPermissions() async {
-    var status = await Permission.storage.status;
-    if (!status.isGranted) {
-      await Permission.storage.request();
-    }
-  }
-
-  // Future<String> extractData() async {
-  //   String url = "https://shamela.ws/book/10426/";
-  //   List<Future<void>> fetchTasks = [];
-
-  //   while (true) {
-  //     final response = await http.get(Uri.parse("$url${page++}"));
-  //     log(page.toString());
-  //     if (response.statusCode == 200) {
-  //       var document = parser.parse(response.body);
-  //       try {
-  //         var lessons = document.querySelectorAll(".nass.margin-top-10 > p");
-  //         if (lessons.isNotEmpty) {
-  //           for (var lesson in lessons) {
-  //             result += "${lesson.text}\n";
-  //           }
-  //           fetchTasks.add(Future.value());
-  //         } else {
-  //           break;
-  //         }
-  //       } catch (e) {
-  //         break;
-  //       }
-  //     } else {
-  //       break;
-  //     }
-  //   }
-
-  //   await Future.wait(fetchTasks);
-  //   return result;
-  // }
 
   var finishedCount = 0;
   late int allCount;
@@ -84,6 +84,7 @@ class _HomeViewState extends State<HomeView> {
     final urls = List<String>.empty(growable: true);
     for (var i = 1; i <= lastPageNumber; i++) {
       urls.add('$url$i');
+      print(i);
     }
     final pagesFuturs = urls.map((e) async => await getPage(e));
     final pages = await Future.wait(pagesFuturs);
@@ -92,6 +93,7 @@ class _HomeViewState extends State<HomeView> {
     final newPages = pages.skip(1).fold(List<Chapter>.from([pages.first]),
         (previousValue, element) {
       if (previousValue.last.title != element.title) {
+        chapters++;
         previousValue.add(Chapter(element.title, ''));
       }
 
@@ -176,43 +178,60 @@ class _HomeViewState extends State<HomeView> {
   }
 
   Future<void> saveAsTxt(List<Chapter> result) async {
-    final status = await Permission.storage.status;
-    if (!status.isGranted) {
-      await Permission.storage.request();
-      final directory = Directory('/storage/emulated/0/Download');
-      final filePath = '${directory.path}/document.txt';
+    try {
+      final selectedDirectory = await FilePicker.platform.getDirectoryPath();
+      final filePath = '$selectedDirectory/document.txt';
       final file = File(filePath);
+      if (await file.exists() == true) {
+        file.delete();
+      }
       await file.create(recursive: true);
       final text = result
           .map((chapter) => '${chapter.title}\n${chapter.text}\n')
           .join('\n');
-      await file.writeAsString(text);
-      print("TXT file saved to Downloads folder.");
-    } else {
-      print("Permission to access storage denied.");
+      await file.writeAsString(text).then((value) {
+        print("TXT file saved to Downloads folder.");
+      });
+    } catch (e) {
+      print("Error: $e");
     }
   }
 
   Future<void> saveAsPdf(List<Chapter> result) async {
-    final status = await Permission.storage.status;
-    if (!status.isGranted) {
-      await Permission.storage.request();
-      await fetchData();
-      final directory = Directory("/storage/emulated/0/Download");
-      final filePath = '${directory.path}/document.pdf';
+    int i = 0;
+    try {
+      String? selectedDirectory = await FilePicker.platform.getDirectoryPath();
+      final filePath = '$selectedDirectory/document.pdf';
       final file = File(filePath);
+      if (await file.exists() == true) {
+        file.delete();
+      }
       await file.create(recursive: true);
       final pdf = pw.Document();
+      var titleStyle = await PdfGoogleFonts.amiriBold();
+      var textStyle = await PdfGoogleFonts.amiriRegular();
+      // print(result.length);
+      // log(chapters.toString());
+
       for (var chapter in result) {
+        // i++;
+        // print(i);
         pdf.addPage(
           pw.Page(
             build: (pw.Context context) {
               return pw.Center(
                 child: pw.Column(
                   children: [
-                    pw.Text(chapter.title,
-                        style: pw.TextStyle(fontWeight: pw.FontWeight.bold)),
-                    pw.Text(chapter.text),
+                    pw.Text(
+                      chapter.title,
+                      style: pw.TextStyle(font: titleStyle),
+                      textDirection: pw.TextDirection.rtl,
+                    ),
+                    pw.Text(
+                      chapter.text,
+                      style: pw.TextStyle(font: textStyle),
+                      textDirection: pw.TextDirection.rtl,
+                    ),
                   ],
                 ),
               );
@@ -220,15 +239,18 @@ class _HomeViewState extends State<HomeView> {
           ),
         );
       }
+
       await file.writeAsBytes(await pdf.save());
       print("PDF file saved to Downloads folder.");
-    } else {
-      print("Permission to access storage denied.");
+    } catch (e) {
+      print("Error: $e");
     }
   }
 
+  String url = "";
   @override
   Widget build(BuildContext context) {
+    TextEditingController urlController = TextEditingController();
     return Scaffold(
       appBar: AppBar(
         title: const Text('Al-Hossam'),
@@ -239,8 +261,20 @@ class _HomeViewState extends State<HomeView> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
+              Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: TextFormField(
+                  decoration: const InputDecoration(labelText: 'Enter URL'),
+                  controller: urlController,
+                  onChanged: (value) {
+                    setState(() {
+                      url = value;
+                    });
+                  },
+                ),
+              ),
               const SizedBox(height: 20.0),
-              if (result.isNotEmpty) // Check if result is not empty
+              if (result.isNotEmpty)
                 Column(
                   children: result.map((chapter) {
                     return Column(
@@ -248,22 +282,22 @@ class _HomeViewState extends State<HomeView> {
                         Text(
                           chapter.title,
                           style: TextStyle(
-                            fontSize: 16.0,
+                            fontSize: 12.0,
                             fontWeight: FontWeight.bold,
                             color: isLoading ? Colors.blue : Colors.black,
                           ),
                           textDirection: TextDirection.rtl,
                           textAlign: TextAlign.center,
                         ),
-                        Text(
-                          chapter.text,
-                          style: TextStyle(
-                            fontSize: 16.0,
-                            color: isLoading ? Colors.blue : Colors.black,
-                          ),
-                          textDirection: TextDirection.rtl,
-                          textAlign: TextAlign.center,
-                        ),
+                        // Text(
+                        //   chapter.text,
+                        //   style: TextStyle(
+                        //     fontSize: 16.0,
+                        //     color: isLoading ? Colors.blue : Colors.black,
+                        //   ),
+                        //   textDirection: TextDirection.rtl,
+                        //   textAlign: TextAlign.center,
+                        // ),
                       ],
                     );
                   }).toList(),
@@ -286,7 +320,12 @@ class _HomeViewState extends State<HomeView> {
               ),
               const SizedBox(height: 20.0),
               ElevatedButton(
-                onPressed: isLoading ? null : () => saveAsDocx(result),
+                onPressed: isLoading
+                    ? () => print("data not loaded")
+                    : () {
+                        print("making");
+                        saveAsTxt(result);
+                      },
                 style: ButtonStyle(
                   backgroundColor: MaterialStateProperty.all(Colors.green),
                 ),
@@ -301,7 +340,12 @@ class _HomeViewState extends State<HomeView> {
                       ),
               ),
               ElevatedButton(
-                onPressed: isLoading ? null : () => saveAsPdf(result),
+                onPressed: isLoading
+                    ? null
+                    : () {
+                        print("making pdf");
+                        saveAsPdf(result);
+                      },
                 style: ButtonStyle(
                   backgroundColor: MaterialStateProperty.all(Colors.red),
                 ),
@@ -325,14 +369,13 @@ class _HomeViewState extends State<HomeView> {
   Future<void> fetchData() async {
     setState(() {
       isLoading = true;
-      result = []; // Initialize result as an empty list of Chapters
+      result = [];
     });
 
     try {
-      final chapters = await extractData(
-          "https://shamela.ws/book/10426/"); // Assuming extractData returns List<Chapter>
+      final chapters = await extractData(url);
       setState(() {
-        result = chapters;
+        result = [Chapter("الحمد لله", "تم تحميل الكتاب بنجاح")];
         isLoading = false;
       });
     } catch (e) {
