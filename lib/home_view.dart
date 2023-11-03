@@ -2,8 +2,10 @@ import 'dart:developer';
 import 'dart:io';
 
 import 'package:device_info_plus/device_info_plus.dart';
+import 'package:docx_template/docx_template.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:html/parser.dart' as parserLibrary;
 import 'package:http/http.dart' as http;
@@ -157,23 +159,40 @@ class _HomeViewState extends State<HomeView> {
   }
 
   Future<void> saveAsDocx(List<Chapter> result) async {
-    final status = await Permission.storage.status;
-    if (!status.isGranted) {
-      await Permission.storage.request();
-      final directory = await getApplicationDocumentsDirectory();
-      final filePath = '${directory.path}/document.docx';
-      final file = File(filePath);
-      await file.create(recursive: true);
-      final doc = await docx.DocxTemplate.fromBytes(await file.readAsBytes());
+    try {
+      final fileDirectory = await FilePicker.platform.getDirectoryPath();
+      final data = await rootBundle.load('template.docx');
+      final bytes = data.buffer.asUint8List();
+
+      final docx = await DocxTemplate.fromBytes(bytes);
+      // final selectedDirectory = await FilePicker.platform.getDirectoryPath();
+      // final filePath = '$selectedDirectory/document.docx';
+      final contentList = <Content>[];
+      final b = result.iterator;
       for (var chapter in result) {
-        // final title = docx.Content(chapter.title);
-        final content = docx.Content(chapter.text);
-        // doc.generate(title);
-        doc.generate(content);
+        b.moveNext();
+        final c = PlainContent("value")
+          // ..add(TextContent("docname", "Book generated"))
+          ..add(TextContent("titles", chapter.title))
+          ..add(TextContent("multilineText", chapter.text));
+        contentList.add(c);
       }
+      log(contentList.length.toString(), name: "data");
+      Content c = Content();
+      c
+        ..add(TextContent("normalText", contentList))
+        ..add(TextContent("bold", result.first.title))
+        ..add(TextContent("multilineText", result.first.text))
+        ..add(TextContent("docname", "Book regenerated"));
+
+      // log(wholeContent);
+      final docGenerated = await docx.generate(c);
+      final fileGenerated = File('$fileDirectory/generated.docx');
+      if (docGenerated != null) await fileGenerated.writeAsBytes(docGenerated);
+
       print("Docx file saved.");
-    } else {
-      print("Permission to access storage denied.");
+    } catch (e) {
+      print("Error: $e");
     }
   }
 
@@ -209,7 +228,7 @@ class _HomeViewState extends State<HomeView> {
       await file.create(recursive: true);
       final pdf = pw.Document();
       var titleStyle = await PdfGoogleFonts.amiriBold();
-      var textStyle = await PdfGoogleFonts.amiriRegular();
+      var textStyle = await PdfGoogleFonts.notoNaskhArabicRegular();
       // print(result.length);
       // log(chapters.toString());
 
@@ -229,7 +248,7 @@ class _HomeViewState extends State<HomeView> {
                     ),
                     pw.Text(
                       chapter.text,
-                      style: pw.TextStyle(font: textStyle),
+                      style: pw.TextStyle(font: titleStyle),
                       textDirection: pw.TextDirection.rtl,
                     ),
                   ],
@@ -248,9 +267,10 @@ class _HomeViewState extends State<HomeView> {
   }
 
   String url = "";
+  bool done = false;
+  TextEditingController urlController = TextEditingController();
   @override
   Widget build(BuildContext context) {
-    TextEditingController urlController = TextEditingController();
     return Scaffold(
       appBar: AppBar(
         title: const Text('Al-Hossam'),
@@ -268,7 +288,9 @@ class _HomeViewState extends State<HomeView> {
                   controller: urlController,
                   onChanged: (value) {
                     setState(() {
+                      print("بدأ جلب الكتاب");
                       url = value;
+                      print(value);
                     });
                   },
                 ),
@@ -276,35 +298,23 @@ class _HomeViewState extends State<HomeView> {
               const SizedBox(height: 20.0),
               if (result.isNotEmpty)
                 Column(
-                  children: result.map((chapter) {
-                    return Column(
-                      children: [
-                        Text(
-                          chapter.title,
-                          style: TextStyle(
-                            fontSize: 12.0,
-                            fontWeight: FontWeight.bold,
-                            color: isLoading ? Colors.blue : Colors.black,
-                          ),
-                          textDirection: TextDirection.rtl,
-                          textAlign: TextAlign.center,
-                        ),
-                        // Text(
-                        //   chapter.text,
-                        //   style: TextStyle(
-                        //     fontSize: 16.0,
-                        //     color: isLoading ? Colors.blue : Colors.black,
-                        //   ),
-                        //   textDirection: TextDirection.rtl,
-                        //   textAlign: TextAlign.center,
-                        // ),
-                      ],
-                    );
-                  }).toList(),
+                  children: [
+                    Text(
+                      "تم جلب محتوى الكتاب بنجاح، الحمد لله",
+                      style: TextStyle(
+                        fontSize: 12.0,
+                        fontWeight: FontWeight.bold,
+                        color: isLoading ? Colors.blue : Colors.black,
+                      ),
+                      textDirection: TextDirection.rtl,
+                      textAlign: TextAlign.center,
+                    ),
+                  ],
                 ),
               const SizedBox(height: 20.0),
               ElevatedButton(
-                onPressed: isLoading ? null : () => fetchData(),
+                onPressed:
+                    isLoading ? null : () => fetchData(urlController.text),
                 style: ButtonStyle(
                   backgroundColor: MaterialStateProperty.all(Colors.blue),
                 ),
@@ -325,6 +335,26 @@ class _HomeViewState extends State<HomeView> {
                     : () {
                         print("making");
                         saveAsTxt(result);
+                      },
+                style: ButtonStyle(
+                  backgroundColor: MaterialStateProperty.all(Colors.green),
+                ),
+                child: isLoading
+                    ? const Padding(
+                        padding: EdgeInsets.all(8.0),
+                        child: CircularProgressIndicator(),
+                      )
+                    : const Text(
+                        "حفظ كمستند TXT",
+                        style: TextStyle(fontSize: 16.0, color: Colors.white),
+                      ),
+              ),
+              ElevatedButton(
+                onPressed: isLoading
+                    ? () => print("data not loaded")
+                    : () {
+                        print("making");
+                        saveAsDocx(result);
                       },
                 style: ButtonStyle(
                   backgroundColor: MaterialStateProperty.all(Colors.green),
@@ -366,17 +396,18 @@ class _HomeViewState extends State<HomeView> {
     );
   }
 
-  Future<void> fetchData() async {
+  Future<void> fetchData(String desiredUrl) async {
     setState(() {
       isLoading = true;
       result = [];
     });
 
     try {
-      final chapters = await extractData(url);
+      final chapters = await extractData(desiredUrl);
       setState(() {
-        result = [Chapter("الحمد لله", "تم تحميل الكتاب بنجاح")];
+        result = chapters;
         isLoading = false;
+        done = true;
       });
     } catch (e) {
       setState(() {
